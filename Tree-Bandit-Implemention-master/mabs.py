@@ -266,87 +266,47 @@ class EpsGreedy:
         self.q[action] = self.rewards[action] / self.clicks[action]
 
 class LogisticUCB:
-    # initialise values and raise input errors
     def __init__(self, n_actions, n_dims, delta, T):
-        # 決定木はsklearnのDecisionTreeClassifier使用(CART分類木)
-        # てっきり回帰木かと思ったが，これの.predict_proba()を利用して推定値を出力しているみたい
 
         if not type(n_dims) == int:
             raise TypeError("`n_dims` must be integer type")
         self.n_actions = n_actions
         self.n_dims = n_dims
         self.D = [np.ones(self.n_dims) for _ in range(n_actions) ] # D[action_idx]: 各行動を実行したときの文脈情報
-        self.r = [[] for _ in range(n_actions)]  # 最終的には[[0. ] [1. ] [1. ] [1. ] [0. ] [... [1. ]]のような形になってそう
-        self.X = [np.eye(self.n_dims) for _ in range(n_actions) ]
-        self.prob = np.zeros(self.n_actions)  # create zero array to save predicted probability from treeclassifier
-        self.stopper = 0
-
-        self.features = []
-        self.thresholds = []
-        self.values = []
-        self.preds = []
-        # feature = tree.feature
-        # threshold = tree.threshold
-        # value = tree.value  # 各クラスのデータ数
+        self.r = [[] for _ in range(n_actions)]  # 行動ごとに得られた報酬
+        self.X = [np.eye(self.n_dims) for _ in range(n_actions) ]  # 行動ごとに過去の文脈の和を取る．正則化のため単位行列が初期値
+        self.prob = np.zeros(self.n_actions)  # 行動選択確率
         # -----------------{以下、LogisticUCB特有項}---------------------------------------------
         self.T = T  # 何回シミュレーション試行するのか
         self.delta = delta  # 信頼係数
+        # ロジスティック回帰パラメータ，行動ごとに文脈と同次元のパラメータ
         self.theta = [np.ones(self.n_dims) for _ in range(n_actions)] # * initial_value  # 回帰パラメータ，初期値わからんので長さd，すべて大きさ1のベクトルに
 
-        # 以下，関数
-        self.L = lambda x: exp(x) / (1 + exp(x))  # 関数
-        self.rho = lambda x: sqrt(self.n_dims*log(x)*log(x*self.T / self.delta))  # 関数
-        # self.likelihood =  # θの最尤推定量を計算する関数。https://qiita.com/Tusnori/items/ceebfb2cdbaf694f95f7　参照
+        # 以下，計算用関数
+        self.L = lambda x: exp(x) / (1 + exp(x))  
+        self.rho = lambda x: sqrt(self.n_dims*log(x)*log(x*self.T / self.delta))  
 
-        
-
-    def reset(self, n_actions, n_dims, tree=DecisionTreeClassifier(max_depth=2)):  # 要らないかも
-        # 決定木はsklearnのDecisionTreeClassifier使用(CART分類木)
-        # てっきり回帰木かと思ったが，これの.predict_proba()を利用して推定値を出力しているみたい
-
-        if not type(n_dims) == int:
-            raise TypeError("`n_dims` must be integer type")
-        self.n_actions = n_actions
-        self.n_dims = n_dims
-        self.tree = tree
-        self.D = [[[] for i in range(n_actions) ] for j in range(1)]  # 過去データ(文脈)．D[0][arm]で行動arm(0インデックス)の過去データを取得
-        self.r = [[0 for i in range(n_actions) ] for j in range(1)]  # 最終的には[[0. ] [1. ] [1. ] [1. ] [0. ] [... [1. ]]のような形になってそう
-        self.prob = np.zeros(self.n_actions)  # create zero array to save predicted probability from treeclassifier
-        self.stopper = 0
-
-        self.features = []
-        self.thresholds = []
-        self.values = []
-        self.preds = []
 
     # return the best arm
-    # context: 時刻tの文脈情報 -> x_tとして使える
+    # context: 時刻tの文脈情報 -> (DやXには含まれない) -> 擬似アルゴリズムと合わせてx_tと表記する
     def play(self, context):
-        # print("play")
         x_t = context.values.reshape(1, -1)  # like [1, 2, ...]: 1行にまとめる、-1は列数が要素数に対応することを意味
 
-        
-        # 全ての行動について以下forループでブートストラップサンプルを作りたい
         for kaisuu, arm in enumerate(range(self.n_actions)):
             # とりあえず各行動1回は実行してデータ(文脈, 報酬)を回収する（他手法と同様）
             if (self.D[arm] == np.ones(self.n_dims)).all():
-                # set decision tree to predict 1 regardless of the input
-                self.prob[arm] = 1.0  # predict 1
-                # print("kotira")
+                self.prob[arm] = 1.0
             else:
-                # print("x_t_T: ", x_t.T)
-                # print("self:theta: ", self.theta[arm])
-                # print(self.rho(max(len(self.D[arm])-2, 1)))
-                # print(sqrt(x_t @ np.linalg.inv(self.X[arm]) @ x_t.T))
+                # アルゴリズム通り行動選択確率を計算
                 UCB_score = self.L(x_t @ self.theta[arm]) + self.rho(max(len(self.D[arm])-2, 1)) * sqrt(x_t @ np.linalg.inv(self.X[arm]) @ x_t.T)
                 self.prob[arm] = UCB_score
 
         arm = break_tie(self.prob)  # [0.1, 0.01, 0.8, ...]行動ごと推定報酬値のargmax
         return arm
 
-    # update
+    # 選択行動の文脈・報酬情報更新＋ニュートン法によるパラメータ最適化
     def update(self, context, action, reward):
-        shaped_context = context.values.reshape(1, -1)             # reshape the form
+        shaped_context = context.values.reshape(1, -1)
 
 
         if (self.D[action] == np.ones(self.n_dims)).all():
@@ -356,21 +316,17 @@ class LogisticUCB:
             self.D[action] = np.vstack((self.D[action], shaped_context))
             self.r[action] = np.vstack((self.r[action], reward))
 
+        # 行動actionの文脈に関する計画行列(n_dims × n_dims)
         self.X[action] = self.X[action] + shaped_context.T @ shaped_context
-        # print(self.r)
 
 
         def func(theta_):
-            # print("shaped: ", shaped_context)
-            # print("theta_: ", theta_)
             tmp = exp(sum([shaped_context[0][i]*theta_[i] for i in range(3)]))
-            # print("tmp: ", tmp)
-            # print(np.array([sum([self.D[action][i][j]*(self.r[i][0]-tmp) for i in range(len(self.D)-2)]) for j in range(self.n_dims)
-            # ]).reshape(-1))
             return [  # 文脈の次元の数だけ方程式が立つ
                 np.array([sum([self.D[action][i][j]*(self.r[i][0]-tmp) for i in range(len(self.D)-2)]) for j in range(self.n_dims)
-            ]).reshape(-1)]
+            ]).reshape(-1)]  # len(self.D)-2の-2は，D = D_1, D_1, D_1, D_2, D_3, ...とD_1が3個入るようになっているため
         
-
+        # パラメータの初期値: 全ての要素=1
         result = optimize.root(func, np.array([1.0]*self.n_dims), method="broyden1")
+        # パラメータ更新
         self.theta[action] = result.x
