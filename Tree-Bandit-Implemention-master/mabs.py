@@ -279,11 +279,12 @@ class LogisticUCB:
         # -----------------{以下、LogisticUCB特有項}---------------------------------------------
         self.T = T  # 何回シミュレーション試行するのか
         self.delta = delta  # 信頼係数
+        self.t = [0]*(n_actions)  # 各行動の試行回数
         # ロジスティック回帰パラメータ，行動ごとに文脈と同次元のパラメータ
         self.theta = [np.ones(self.n_dims) for _ in range(n_actions)] # * initial_value  # 回帰パラメータ，初期値わからんので長さd，すべて大きさ1のベクトルに
 
         # 以下，計算用関数
-        self.L = lambda x: exp(x) / (1 + exp(x))  
+        self.L = lambda x: exp(x) / (1 + exp(x)) if x < 10 else 1  # x>=10はL(x)=1とみなす（オーバーフローしてしまうので，，）
         self.rho = lambda x: sqrt(self.n_dims*log(x)*log(x*self.T / self.delta))  
 
 
@@ -298,8 +299,12 @@ class LogisticUCB:
                 self.prob[arm] = 1.0
             else:
                 # アルゴリズム通り行動選択確率を計算
+                # print(x_t)
+                # print(self.theta[arm])
+                # print(x_t @ self.theta[arm])
                 UCB_score = self.L(x_t @ self.theta[arm]) + self.rho(max(len(self.D[arm])-2, 1)) * sqrt(x_t @ np.linalg.inv(self.X[arm]) @ x_t.T)
                 self.prob[arm] = UCB_score
+                # print(UCB_score)
 
         arm = break_tie(self.prob)  # [0.1, 0.01, 0.8, ...]行動ごと推定報酬値のargmax
         return arm
@@ -318,12 +323,20 @@ class LogisticUCB:
 
         # 行動actionの文脈に関する計画行列(n_dims × n_dims)
         self.X[action] = self.X[action] + shaped_context.T @ shaped_context
+        # 行動actionの試行回数++;
+        self.t[action] += 1
 
-
+        # 【訂正】内積計算をnp.dot()で書く
         def func(theta_):
-            tmp = exp(sum([shaped_context[0][i]*theta_[i] for i in range(3)]))
+            # print(shaped_context)
+            # print(self.theta)
+            # print(np.dot(shaped_context, self.theta))
+            tmp = exp(max(50, np.dot(shaped_context, self.theta[action])))  # オーバーフロー回避
+            # print(self.D)
+            # print(self.r)
+            # print(self.t)
             return [  # 文脈の次元の数だけ方程式が立つ
-                np.array([sum([self.D[action][i][j]*(self.r[i][0]-tmp) for i in range(len(self.D)-2)]) for j in range(self.n_dims)
+                np.array([sum([self.D[action][i][j]*(self.r[action][i][0]-tmp) for i in range(self.t[action])]) for j in range(self.n_dims)
             ]).reshape(-1)]  # len(self.D)-2の-2は，D = D_1, D_1, D_1, D_2, D_3, ...とD_1が3個入るようになっているため
         
         # パラメータの初期値: 全ての要素=1
