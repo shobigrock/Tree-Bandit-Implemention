@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 import random
 from math import exp, sqrt, log
-from scipy import optimize  # 最適パラメータ計算用(ニュートン法)
+from scipy import optimize, stats  # 最適パラメータ計算用(ニュートン法), TS用
 
 """
 各種バンディットアルゴリズムのクラスを置くファイル
@@ -264,6 +264,34 @@ class EpsGreedy:
         self.clicks[action] += 1
         self.rewards[action] += reward
         self.q[action] = self.rewards[action] / self.clicks[action]
+
+class ThompsonSampling:
+
+    # initialise values and raise input errors
+    def __init__(self, n_arms):
+        self.rewards = np.zeros(n_arms)     # keep the total rewards per arm
+        self.clicks = np.zeros(n_arms)      # count the pulled rounds per arm
+        self.n_arms = n_arms
+        self.init_idx = 0  # 初期探索用
+        self.q = np.zeros(n_arms)  # 確率変数の実現値を格納する
+        self.alpha = 1
+        self.beta = 1
+
+    # 各行動1回は行い，1回以上行った行動はベータ分布からの生成に切り替える
+    def play(self, context=None):
+        if self.init_idx != self.n_arms-1:
+            arm = self.init_idx
+            self.init_idx += 1
+        else:
+            for i in range(self.n_arms):
+                self.q[i] = stats.beta(self.alpha+self.rewards[i], self.beta+(self.clicks[i]-self.rewards[i])).rvs()
+                arm = break_tie(self.q)
+        return arm
+
+    # update values
+    def update(self, context, action, reward):
+        self.clicks[action] += 1
+        self.rewards[action] += reward
 
 class LogisticUCB:
     def __init__(self, n_actions, n_dims, delta, T):
